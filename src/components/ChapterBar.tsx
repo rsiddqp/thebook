@@ -2,7 +2,14 @@ import React, { useState } from 'react';
 import { useBookStore } from '../store/useBookStore';
 
 export const ChapterBar: React.FC = () => {
-  const { activeBook, chapters, activeChapter, setActiveChapter, createChapter } = useBookStore();
+  const {
+    activeBook,
+    chapters,
+    activeChapter,
+    setActiveChapter,
+    createChapter,
+    autoSaving,
+  } = useBookStore();
   const [showNewChapterModal, setShowNewChapterModal] = useState(false);
   const [newChapterTitle, setNewChapterTitle] = useState('');
   const [creating, setCreating] = useState(false);
@@ -47,9 +54,9 @@ export const ChapterBar: React.FC = () => {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-slate-500">
-              {useBookStore.getState().autoSaving ? 'Saving...' : 'Saved'}
+              {autoSaving ? 'Saving...' : 'Saved'}
             </span>
-            <div className={`w-2 h-2 rounded-full ${useBookStore.getState().autoSaving ? 'bg-yellow-500' : 'bg-green-500'}`}></div>
+            <div className={`w-2 h-2 rounded-full ${autoSaving ? 'bg-yellow-500' : 'bg-green-500'}`}></div>
           </div>
         </div>
       </div>

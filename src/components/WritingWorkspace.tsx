@@ -25,13 +25,18 @@ export const WritingWorkspace: React.FC = () => {
   } = useBookStore();
 
   const debounceTimerRef = useRef<number | null>(null);
+  const autoSaveTimerRef = useRef<number | null>(null);
+  const pendingContentRef = useRef<{ id: string; html: string } | null>(null);
   const lastAnalyzedTextRef = useRef<string>('');
   const analysisInProgressRef = useRef<boolean>(false);
   const previousSelectionPosRef = useRef<number>(0);
+  const loadedChapterIdRef = useRef<string | null>(null);
+
+  const activeChapterId = activeChapter?.id;
 
   const analyzeWriting = useCallback(
     async (fullText: string) => {
-      if (!activeChapter || !activeBook || analysisInProgressRef.current) return;
+      if (!activeChapterId || !activeBook || analysisInProgressRef.current) return;
       if (fullText.trim().length < 30) return;
 
       // Avoid re-analyzing identical text
@@ -45,7 +50,7 @@ export const WritingWorkspace: React.FC = () => {
       try {
         const result = await executeEditorialAnalysis({
           fullText,
-          activeChapterId: activeChapter.id,
+          activeChapterId,
           bookTitle: activeBook.title,
           bookGenre: activeBook.genre,
           styleFingerprint: activeBook.style_fingerprint || {},
@@ -67,7 +72,7 @@ export const WritingWorkspace: React.FC = () => {
       }
     },
     [
-      activeChapter,
+      activeChapterId,
       activeBook,
       editorialPreferences,
       learningState,
@@ -78,29 +83,38 @@ export const WritingWorkspace: React.FC = () => {
 
   const handleContentChange = useCallback(
     (html: string, plainText: string) => {
-      if (!activeChapter || !activeBook) return;
+      if (!activeChapterId) return;
 
-      updateChapterContent(activeChapter.id, html);
+      // Queue debounced auto-save
+      pendingContentRef.current = { id: activeChapterId, html };
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+      autoSaveTimerRef.current = window.setTimeout(() => {
+        if (pendingContentRef.current) {
+          updateChapterContent(pendingContentRef.current.id, pendingContentRef.current.html);
+          pendingContentRef.current = null;
+        }
+      }, 1500);
 
-      // Dynamically validate existing suggestions against modified content
-      recheckSuggestionsValidity(plainText);
-
+      // Debounce suggestions analysis
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
 
       // Smart debounce: shorter pause (1.2s) if punctuation / sentence completion or newline,
-      // otherwise 2.2s of inactive typing to minimize interruptions
+      // otherwise 2.5s of inactive typing to minimize interruptions
       const trimmed = plainText.trim();
       const lastChar = trimmed.slice(-1);
       const isSentenceEnd = ['.', '?', '!', '\n'].includes(lastChar);
-      const delay = isSentenceEnd ? 1200 : 2200;
+      const delay = isSentenceEnd ? 1200 : 2500;
 
       debounceTimerRef.current = window.setTimeout(() => {
+        recheckSuggestionsValidity(plainText);
         analyzeWriting(plainText);
       }, delay);
     },
-    [activeChapter, activeBook, updateChapterContent, recheckSuggestionsValidity, analyzeWriting]
+    [activeChapterId, updateChapterContent, recheckSuggestionsValidity, analyzeWriting]
   );
 
   const editor = useEditor({
@@ -128,28 +142,39 @@ export const WritingWorkspace: React.FC = () => {
     },
   });
 
-  // Sync content when active chapter changes
+  // Sync content ONLY when active chapter ID changes (initial load or user switches chapter)
+  // NEVER reset editor content while the user is actively typing in the current chapter
   useEffect(() => {
-    if (editor && activeChapter) {
-      const currentContent = editor.getHTML();
-      if (currentContent !== activeChapter.content) {
-        editor.commands.setContent(activeChapter.content || '');
+    if (!editor || !activeChapterId) return;
+
+    if (loadedChapterIdRef.current !== activeChapterId) {
+      // Flush previous chapter save if any
+      if (pendingContentRef.current && pendingContentRef.current.id !== activeChapterId) {
+        updateChapterContent(pendingContentRef.current.id, pendingContentRef.current.html);
+        pendingContentRef.current = null;
       }
+
+      loadedChapterIdRef.current = activeChapterId;
+      const chapterContent = activeChapter?.content || '';
+      editor.commands.setContent(chapterContent);
+      lastAnalyzedTextRef.current = '';
     }
-  }, [activeChapter, editor]);
+  }, [activeChapterId, activeChapter?.content, editor, updateChapterContent]);
 
-  // Reset analysis cache on chapter change
-  useEffect(() => {
-    lastAnalyzedTextRef.current = '';
-  }, [activeChapter?.id]);
-
+  // Flush pending auto-save and clear timers on unmount
   useEffect(() => {
     return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
+      if (pendingContentRef.current) {
+        updateChapterContent(pendingContentRef.current.id, pendingContentRef.current.html);
+      }
     };
-  }, []);
+  }, [updateChapterContent]);
 
   /**
    * Applies a suggestion accurately without disrupting user's cursor position or writing flow.
@@ -238,11 +263,14 @@ export const WritingWorkspace: React.FC = () => {
   );
 
   /**
-   * Highlights the target text snippet in the TipTap editor when hovering or focusing a card.
+   * Highlights the target text snippet in the TipTap editor without interrupting active typing.
    */
   const handleHighlightSnippet = useCallback(
     (originalText: string) => {
       if (!editor || !originalText) return;
+      // Do not interrupt if user is currently focused and typing in editor
+      if (editor.isFocused) return;
+
       const range = findTextRangeInDoc(
         editor.state.doc,
         originalText,
@@ -260,10 +288,8 @@ export const WritingWorkspace: React.FC = () => {
   );
 
   const handleClearHighlight = useCallback(() => {
-    if (!editor) return;
-    const pos = previousSelectionPosRef.current || editor.state.doc.content.size;
-    editor.commands.setTextSelection(pos);
-  }, [editor]);
+    // Intentionally no-op to avoid jumping selection on mouse leave
+  }, []);
 
   if (!activeBook || !activeChapter) {
     return (
