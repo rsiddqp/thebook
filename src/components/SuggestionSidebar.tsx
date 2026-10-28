@@ -1,6 +1,5 @@
 import React from 'react';
 import { useBookStore } from '../store/useBookStore';
-import { Editor } from '@tiptap/react';
 
 const CATEGORY_COLORS = {
   articulation: 'bg-blue-100 text-blue-800 border-blue-200',
@@ -10,7 +9,7 @@ const CATEGORY_COLORS = {
 };
 
 interface SuggestionSidebarProps {
-  editor: Editor | null;
+  editor: any;
 }
 
 export const SuggestionSidebar: React.FC<SuggestionSidebarProps> = ({ editor }) => {
@@ -24,7 +23,7 @@ export const SuggestionSidebar: React.FC<SuggestionSidebarProps> = ({ editor }) 
     const { doc } = state;
     let found = false;
 
-    doc.descendants((node, pos) => {
+    doc.descendants((node: any, pos: number) => {
       if (found) return false;
 
       if (node.isText && node.text) {

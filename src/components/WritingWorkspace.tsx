@@ -33,7 +33,7 @@ export const WritingWorkspace: React.FC = () => {
         class: 'prose prose-slate max-w-none focus:outline-none font-serif text-lg leading-relaxed',
       },
     },
-    onUpdate: ({ editor }) => {
+    onUpdate: ({ editor }: any) => {
       const html = editor.getHTML();
       handleContentChange(html);
     },
