@@ -99,10 +99,30 @@ Provide suggestions that preserve the author's voice while improving clarity, gr
     let result;
     try {
       const content = data.choices[0].message.content;
-      // Remove markdown code blocks if present
-      const jsonContent = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      result = JSON.parse(jsonContent);
-      
+
+      // Strip markdown code blocks
+      let jsonContent = content
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+
+      // Try direct parse first
+      try {
+        result = JSON.parse(jsonContent);
+      } catch {
+        // Fall back: extract the first top-level JSON object from the text
+        const start = jsonContent.indexOf('{');
+        const end = jsonContent.lastIndexOf('}');
+        if (start !== -1 && end !== -1 && end > start) {
+          const candidate = jsonContent.slice(start, end + 1);
+          // Replace literal newlines inside string values that break JSON.parse
+          const fixed = candidate.replace(/\\([^"\\/bfnrtu])/g, '\\$1').replace(/\n/g, '\\n');
+          result = JSON.parse(fixed);
+        } else {
+          throw new Error('No JSON object found in AI response');
+        }
+      }
+
       // Add unique IDs if missing
       if (result.suggestions && Array.isArray(result.suggestions)) {
         result.suggestions = result.suggestions.map((s, idx) => ({

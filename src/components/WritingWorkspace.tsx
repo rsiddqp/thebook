@@ -72,7 +72,7 @@ export const WritingWorkspace: React.FC = () => {
         return;
       }
 
-      if (result?.suggestions) {
+      if (result?.suggestions && result.suggestions.length > 0) {
         setSuggestions(result.suggestions);
       }
     } catch (error) {
