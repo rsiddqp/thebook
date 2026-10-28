@@ -36,6 +36,8 @@ interface BookStore {
   syncChapterContext: (chapterId: string, bookId: string, content: string) => Promise<void>;
 }
 
+const MAX_SUGGESTIONS = 12;
+
 export const useBookStore = create<BookStore>((set, get) => ({
   user: null,
   books: [],
@@ -192,7 +194,20 @@ export const useBookStore = create<BookStore>((set, get) => ({
     set({ autoSaving: false });
   },
 
-  setSuggestions: (suggestions) => set({ suggestions }),
+  setSuggestions: (suggestions) => {
+    // Deduplicate by original_text so the same issue isn't shown twice
+    const seen = new Set();
+    const unique = [];
+    for (const s of suggestions) {
+      if (s.original_text && seen.has(s.original_text)) continue;
+      seen.add(s.original_text);
+      unique.push(s);
+    }
+
+    // Cap total suggestions so the sidebar stays performant as content grows;
+    // keep the most recent ones.
+    set({ suggestions: unique.slice(-MAX_SUGGESTIONS) });
+  },
 
   applySuggestion: (suggestionId) => {
     set({

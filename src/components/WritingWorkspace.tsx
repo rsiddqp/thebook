@@ -18,6 +18,7 @@ export const WritingWorkspace: React.FC = () => {
 
   const debounceTimerRef = useRef<number | null>(null);
   const lastContentRef = useRef<string>('');
+  const lastAnalyzedParagraphsRef = useRef<string>('');
   const analysisInProgressRef = useRef<boolean>(false);
 
   const editor = useEditor({
@@ -88,11 +89,18 @@ export const WritingWorkspace: React.FC = () => {
       // Split into paragraphs
       const paragraphs = text.split('\n\n').filter(p => p.trim());
       
-      // Get last 2-3 paragraphs as active text
-      const activeText = paragraphs.slice(-3).join('\n\n');
+      // Keep only the last two paragraphs as the analysis window
+      const activeText = paragraphs.slice(-2).join('\n\n');
       
-      // Get previous 2 paragraphs as context
-      const localContext = paragraphs.slice(-5, -3).join('\n\n');
+      // Skip re-analysis if the last two paragraphs haven't changed
+      if (activeText === lastAnalyzedParagraphsRef.current) {
+        analysisInProgressRef.current = false;
+        return;
+      }
+      lastAnalyzedParagraphsRef.current = activeText;
+      
+      // No older context—suggestions are limited to the latest two paragraphs
+      const localContext = '';
 
       const { data, error } = await supabase.functions.invoke('analyze-writing', {
         body: {

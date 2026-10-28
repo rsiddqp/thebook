@@ -123,7 +123,7 @@ The project is configured for automatic deployment to GitHub Pages:
 1. **Debounced Analysis**: After you pause typing for 2.5 seconds, the active paragraphs are sent to the AI
 2. **Context-Aware**: The AI considers:
    - Your writing style fingerprint (POV, tense, tone, rhythm)
-   - Previous paragraphs for local context
+   - Only the last two paragraphs for local context (older paragraphs are excluded)
    - Previous chapters for story continuity
 3. **Voice Preservation**: The AI never rewrites your story—it only suggests improvements that match your voice
 4. **Structured Output**: Suggestions are categorized as Articulation, Grammar, Style, or Continuity
