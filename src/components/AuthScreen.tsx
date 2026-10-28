@@ -9,6 +9,13 @@ export const AuthScreen: React.FC = () => {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
+  const getRedirectUrl = () => {
+    return (
+      import.meta.env.VITE_AUTH_REDIRECT_URL ||
+      `${window.location.origin}${window.location.pathname}`
+    );
+  };
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -20,6 +27,9 @@ export const AuthScreen: React.FC = () => {
         const { error } = await supabase.auth.signUp({
           email,
           password,
+          options: {
+            emailRedirectTo: getRedirectUrl(),
+          },
         });
         if (error) throw error;
         setMessage('Check your email for the confirmation link!');
@@ -45,6 +55,9 @@ export const AuthScreen: React.FC = () => {
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
+        options: {
+          emailRedirectTo: getRedirectUrl(),
+        },
       });
       if (error) throw error;
       setMessage('Check your email for the magic link!');

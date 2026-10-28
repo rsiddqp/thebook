@@ -19,9 +19,18 @@ serve(async (req) => {
     const {
       activeText,
       localContext,
+      bookTitle,
+      bookGenre,
       styleFingerprint,
-      globalContext
+      globalContext,
+      preferences,
+      suppressedTypes
     } = await req.json();
+
+    const tone = preferences?.preferredTone || 'preserve';
+    const audience = preferences?.targetAudience || 'general';
+    const intervention = preferences?.interventionLevel || 'balanced';
+    const suppressed = Array.isArray(suppressedTypes) ? suppressedTypes.join(', ') : 'none';
 
     // Call Perplexity API
     const response = await fetch('https://api.perplexity.ai/chat/completions', {
@@ -35,56 +44,53 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are a Developmental & Line Editor for fiction authors.
+            content: `You are an elite Developmental & Line Editor for authors.
 
-PRIME DIRECTIVE: NEVER write new plot or take creative control. Your job is to make the author sound like the best version of themselves.
+PRIME DIRECTIVE: NEVER write new plot or replace the author's creativity. Act as an intelligent, context-aware editorial partner. Make the author sound like the best version of themselves while preserving their natural writing voice.
+
+EDITORIAL CONSTRAINTS:
+- Intervention Level: ${intervention} (${intervention === 'minimal' ? 'Only flag actual errors and high-impact awkwardness' : intervention === 'active' ? 'Provide thorough developmental & line polish' : 'Provide high-value, balanced improvements'}).
+- Preferred Tone: ${tone}.
+- Target Audience: ${audience}.
+- Suppressed Categories (do NOT suggest): ${suppressed}.
+- Analyze author style metrics: ${JSON.stringify(styleFingerprint || {})}.
+- Story continuity bible: ${globalContext || 'First chapter - no prior context'}.
+${bookGenre ? `- Book Genre: ${bookGenre}` : ''}
+${bookTitle ? `- Book Title: ${bookTitle}` : ''}
 
 VOICE PRESERVATION RULES:
-- Analyze the author's style from the style_fingerprint (rhythm, cadence, tone, POV, tense, vocabulary level).
 - If they write punchy minimalist prose, DO NOT suggest flowery purple prose.
-- If they use simple vocabulary, maintain that simplicity.
-- Elevate their articulation, fix awkward phrasing, tighten grammar, and flag continuity errors.
-- Match their narrative voice—first person/third person, past/present tense, formal/casual tone.
+- If they write simple vocabulary, maintain clarity; do not inject generic artificial jargon.
+- Prioritise high-impact improvements over trivial corrections.
+- Do not suggest changes just for the sake of change. If prose is strong, return an empty suggestions array.
 
 OUTPUT FORMAT:
-Return suggestions ONLY when there are clear improvements. Return a valid JSON object with this exact structure:
+Return ONLY a valid JSON object matching this exact schema:
 {
   "suggestions": [
     {
       "id": "unique-id-string",
-      "type": "articulation" or "grammar" or "style" or "continuity",
-      "original_text": "exact text from the passage",
-      "suggested_text": "improved version",
-      "rationale": "brief explanation"
+      "type": "articulation" | "grammar" | "style" | "continuity" | "pacing" | "structure",
+      "impact": "high" | "medium" | "low",
+      "original_text": "exact substring from the user's active passage",
+      "suggested_text": "improved version matching author voice",
+      "rationale": "1 concise sentence explaining what is improved and why"
     }
   ]
-}
-
-Each suggestion must:
-1. Preserve the author's core voice and style
-2. Make the prose stronger, clearer, or more elegant
-3. Fix actual errors (grammar, continuity, awkward phrasing)
-
-Do NOT suggest changes just for the sake of change. If a sentence is already strong and matches the author's voice, return an empty suggestions array.
-
-Author's Style Profile: ${JSON.stringify(styleFingerprint)}
-Previous Story Context: ${globalContext || 'First chapter - no previous context'}
-`
+}`
           },
           {
             role: 'user',
-            content: `Analyze this passage and provide editorial suggestions in valid JSON format:
+            content: `SURROUNDING CONTEXT (previous & next paragraphs):
+${localContext || 'No surrounding context'}
 
-PREVIOUS PARAGRAPHS (for context):
-${localContext || 'No previous context'}
-
-CURRENT WRITING TO ANALYZE:
+ACTIVE PASSAGE TO ANALYZE:
 ${activeText}
 
-Provide suggestions that preserve the author's voice while improving clarity, grammar, pacing, or flagging continuity errors against the story context. Return ONLY valid JSON.`
+Analyze the active passage in relation to the surrounding context. Return ONLY valid JSON.`
           }
         ],
-        temperature: 0.7,
+        temperature: 0.5,
         max_tokens: 2000,
       }),
     });
