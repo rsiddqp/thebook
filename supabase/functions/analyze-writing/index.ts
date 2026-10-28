@@ -114,10 +114,18 @@ Provide suggestions that preserve the author's voice while improving clarity, gr
         const start = jsonContent.indexOf('{');
         const end = jsonContent.lastIndexOf('}');
         if (start !== -1 && end !== -1 && end > start) {
-          const candidate = jsonContent.slice(start, end + 1);
-          // Replace literal newlines inside string values that break JSON.parse
-          const fixed = candidate.replace(/\\([^"\\/bfnrtu])/g, '\\$1').replace(/\n/g, '\\n');
-          result = JSON.parse(fixed);
+          let candidate = jsonContent.slice(start, end + 1);
+
+          // Aggressive cleaning for common LLM JSON mistakes
+          candidate = candidate
+            // Remove trailing commas in arrays and objects
+            .replace(/,\s*([\]}])/g, '$1')
+            // Replace single quotes with double quotes (naive but helps)
+            .replace(/'/g, '"')
+            // Escape literal newlines inside strings
+            .replace(/\n/g, '\\n');
+
+          result = JSON.parse(candidate);
         } else {
           throw new Error('No JSON object found in AI response');
         }
