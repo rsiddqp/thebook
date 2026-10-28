@@ -67,6 +67,21 @@ export const WritingWorkspace: React.FC = () => {
     }, 2500);
   }, [activeChapter?.id, activeBook?.id]);
 
+  const MAX_RETRIES = 3;
+
+  const invokeWithRetry = async (body: any, attempt = 0): Promise<any> => {
+    const { data, error } = await supabase.functions.invoke('analyze-writing', { body });
+    if (!error) return data;
+
+    if (attempt < MAX_RETRIES) {
+      const backoff = Math.pow(2, attempt) * 1000;
+      await new Promise(resolve => setTimeout(resolve, backoff));
+      return invokeWithRetry(body, attempt + 1);
+    }
+
+    return { error };
+  };
+
   const analyzeWriting = async (html: string) => {
     if (!activeChapter || !activeBook || analysisInProgressRef.current) return;
 
@@ -102,23 +117,25 @@ export const WritingWorkspace: React.FC = () => {
       // No older context—suggestions are limited to the latest two paragraphs
       const localContext = '';
 
-      const { data, error } = await supabase.functions.invoke('analyze-writing', {
-        body: {
-          activeText,
-          localContext,
-          styleFingerprint: activeBook.style_fingerprint || {},
-          globalContext: activeBook.global_context_summary || '',
-        },
+      const result = await invokeWithRetry({
+        activeText,
+        localContext,
+        styleFingerprint: activeBook.style_fingerprint || {},
+        globalContext: activeBook.global_context_summary || '',
       });
 
-      if (error) console.error('analyze-writing error:', error);
-      if (!error && data?.suggestions) {
-        setSuggestions(data.suggestions);
-      } else if (data?.error) {
-        console.error('analyze-writing returned error:', data.error);
+      if (result?.error) {
+        console.error('analyze-writing error after retries:', result.error);
+        setSuggestions([]);
+        return;
+      }
+
+      if (result?.suggestions) {
+        setSuggestions(result.suggestions);
       }
     } catch (error) {
       console.error('Error analyzing writing:', error);
+      setSuggestions([]);
     } finally {
       analysisInProgressRef.current = false;
     }
