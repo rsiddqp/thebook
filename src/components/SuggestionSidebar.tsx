@@ -92,10 +92,14 @@ export const SuggestionSidebar: React.FC<SuggestionSidebarProps> = ({ editor }) 
               <div>
                 <span
                   className={`inline-block px-2 py-0.5 text-xs font-medium rounded border ${
-                    CATEGORY_COLORS[suggestion.type]
+                    suggestion.type && CATEGORY_COLORS[suggestion.type] 
+                      ? CATEGORY_COLORS[suggestion.type]
+                      : CATEGORY_COLORS.style || 'bg-slate-50 text-slate-700 border-slate-200'
                   }`}
                 >
-                  {suggestion.type.charAt(0).toUpperCase() + suggestion.type.slice(1)}
+                  {suggestion.type && typeof suggestion.type === 'string'
+                    ? suggestion.type.charAt(0).toUpperCase() + suggestion.type.slice(1)
+                    : 'Suggestion'}
                 </span>
               </div>
 
