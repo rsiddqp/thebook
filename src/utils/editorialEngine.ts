@@ -10,6 +10,8 @@ import { generateTextHash } from '../store/useBookStore';
 
 export interface AnalysisInput {
   fullText: string;
+  /** If provided, analyze only this selected text instead of auto-detecting dirty paragraph */
+  selectedText?: string;
   activeChapterId?: string;
   bookTitle?: string;
   bookGenre?: string | null;
@@ -78,6 +80,69 @@ export function extractActiveContext(
     localContextAfter,
     paragraphIndex: dirtyIndex,
     totalParagraphs: currentParagraphs.length,
+  };
+}
+
+/**
+ * Extracts the last paragraph as the active writing focus for real-time suggestions.
+ */
+export function extractLastParagraphContext(
+  currentText: string
+): DirtyParagraphInfo | null {
+  const paragraphs = currentText
+    .split(/\n\n+/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
+  if (paragraphs.length === 0) return null;
+
+  const lastIndex = paragraphs.length - 1;
+  const activeText = paragraphs[lastIndex];
+
+  if (!activeText || activeText.length < 20) return null;
+
+  const beforeStart = Math.max(0, lastIndex - 2);
+  const localContextBefore = paragraphs.slice(beforeStart, lastIndex).join('\n\n');
+
+  return {
+    activeText,
+    localContextBefore,
+    localContextAfter: '',
+    paragraphIndex: lastIndex,
+    totalParagraphs: paragraphs.length,
+  };
+}
+
+/**
+ * Extracts context for a user-selected text span within the full document.
+ */
+export function extractSelectionContext(
+  fullText: string,
+  selectedText: string
+): DirtyParagraphInfo | null {
+  if (!selectedText || selectedText.trim().length < 10) return null;
+
+  const paragraphs = fullText
+    .split(/\n\n+/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
+  // Find which paragraph contains the selection
+  let selectionIndex = paragraphs.findIndex((p) => p.includes(selectedText.trim()));
+  if (selectionIndex === -1) {
+    selectionIndex = paragraphs.length - 1;
+  }
+
+  const beforeStart = Math.max(0, selectionIndex - 2);
+  const localContextBefore = paragraphs.slice(beforeStart, selectionIndex).join('\n\n');
+  const localContextAfter = paragraphs.slice(selectionIndex + 1, selectionIndex + 2).join('\n\n');
+
+  return {
+    activeText: selectedText.trim(),
+    localContextBefore,
+    localContextAfter,
+    paragraphIndex: selectionIndex,
+    totalParagraphs: paragraphs.length,
   };
 }
 
@@ -322,13 +387,16 @@ export function runLocalEditorialRules(
 }
 
 /**
- * Executes cloud or local analysis depending on configuration and availability
+ * Executes cloud or local analysis depending on configuration and availability.
+ * In selection mode, analyzes only the selected text.
+ * In real-time mode, analyzes only the last paragraph.
  */
 export async function executeEditorialAnalysis(
   input: AnalysisInput
-): Promise<{ suggestions: Suggestion[]; source: 'edge' | 'custom' | 'local' }> {
+): Promise<{ suggestions: Suggestion[]; source: 'edge' | 'custom' | 'local'; focusText: string }> {
   const {
     fullText,
+    selectedText,
     bookTitle,
     bookGenre,
     styleFingerprint,
@@ -337,9 +405,19 @@ export async function executeEditorialAnalysis(
     learningState,
   } = input;
 
-  const contextInfo = extractActiveContext(fullText);
+  // Determine context based on mode
+  let contextInfo: DirtyParagraphInfo | null;
+
+  if (selectedText && selectedText.trim().length >= 10) {
+    // Selection mode: analyze the user-highlighted text
+    contextInfo = extractSelectionContext(fullText, selectedText);
+  } else {
+    // Real-time mode: analyze only the last paragraph
+    contextInfo = extractLastParagraphContext(fullText);
+  }
+
   if (!contextInfo) {
-    return { suggestions: [], source: 'local' };
+    return { suggestions: [], source: 'local', focusText: '' };
   }
 
   const { activeText, localContextBefore, localContextAfter } = contextInfo;
@@ -357,7 +435,7 @@ export async function executeEditorialAnalysis(
         learningState,
       });
       if (customSuggestions && customSuggestions.length > 0) {
-        return { suggestions: customSuggestions, source: 'custom' };
+        return { suggestions: customSuggestions, source: 'custom', focusText: activeText };
       }
     } catch (err) {
       console.warn('Custom LLM API call failed, falling back to local/edge:', err);
@@ -396,7 +474,7 @@ export async function executeEditorialAnalysis(
           created_at: Date.now(),
           text_hash: generateTextHash(s.original_text, activeText),
         }));
-        return { suggestions: tagged, source: 'edge' };
+        return { suggestions: tagged, source: 'edge', focusText: activeText };
       }
     } catch (edgeErr) {
       // Non-blocking fallback to local rules
@@ -406,7 +484,7 @@ export async function executeEditorialAnalysis(
 
   // Local rule-based engine fallback
   const localSuggestions = runLocalEditorialRules(activeText, preferences, learningState);
-  return { suggestions: localSuggestions, source: 'local' };
+  return { suggestions: localSuggestions, source: 'local', focusText: activeText };
 }
 
 /**

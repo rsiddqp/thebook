@@ -16,11 +16,20 @@ function App() {
       setLoading(false);
     });
 
-    // Listen for auth changes
+    // Listen for auth changes (handles redirect callback tokens in URL hash)
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null);
+
+      // After processing a redirect callback, clean the URL hash so tokens
+      // are not left exposed in the address bar
+      if (
+        (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') &&
+        window.location.hash.includes('access_token')
+      ) {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
     });
 
     return () => subscription.unsubscribe();

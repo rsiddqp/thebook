@@ -89,6 +89,14 @@ export function generateTextHash(originalText: string, context = ''): string {
   return String(hash);
 }
 
+interface AnalysisContext {
+  mode: 'realtime' | 'selection';
+  /** The text currently being analyzed (last paragraph or selected text) */
+  focusText: string;
+  /** Preview label for the sidebar header */
+  label: string;
+}
+
 interface BookStore {
   user: User | null;
   books: Book[];
@@ -102,6 +110,7 @@ interface BookStore {
   highlightedSuggestionId: string | null;
   editorialPreferences: EditorialPreferences;
   learningState: LearningState;
+  analysisContext: AnalysisContext | null;
 
   // Auth actions
   setUser: (user: User | null) => void;
@@ -120,6 +129,8 @@ interface BookStore {
 
   // Suggestion actions
   setSuggestions: (suggestions: Suggestion[]) => void;
+  setFocusedSuggestions: (suggestions: Suggestion[], context: AnalysisContext) => void;
+  clearFocusedSuggestions: () => void;
   applySuggestion: (suggestionId: string, customText?: string) => void;
   dismissSuggestion: (suggestionId: string) => void;
   restoreSuggestion: (suggestionId: string) => void;
@@ -127,6 +138,7 @@ interface BookStore {
   clearResolvedSuggestions: () => void;
   setIsAnalyzing: (analyzing: boolean) => void;
   setHighlightedSuggestionId: (id: string | null) => void;
+  setAnalysisContext: (context: AnalysisContext | null) => void;
 
   // Preferences & Learning actions
   updateEditorialPreferences: (prefs: Partial<EditorialPreferences>) => void;
@@ -152,6 +164,7 @@ export const useBookStore = create<BookStore>((set, get) => ({
   highlightedSuggestionId: null,
   editorialPreferences: loadStoredPreferences(),
   learningState: loadStoredLearningState(),
+  analysisContext: null,
 
   setUser: (user) => set({ user }),
 
@@ -382,6 +395,77 @@ export const useBookStore = create<BookStore>((set, get) => ({
 
     set({ suggestions: combined });
   },
+
+  setFocusedSuggestions: (incoming, context) => {
+    const { learningState, editorialPreferences, activeChapter, suggestions } = get();
+    const activeChapterId = activeChapter?.id;
+    const now = Date.now();
+    const seenHashes = new Set<string>();
+
+    const filtered: Suggestion[] = [];
+
+    for (const item of incoming) {
+      const originalText = (item.original_text || '').trim();
+      if (!originalText) continue;
+
+      const hash = item.text_hash || generateTextHash(originalText, item.context_paragraph);
+
+      if (
+        item.type &&
+        editorialPreferences.enabledCategories &&
+        editorialPreferences.enabledCategories[item.type as SuggestionType] === false
+      ) {
+        continue;
+      }
+
+      if (learningState.suppressedTypes.includes(item.type)) {
+        if (editorialPreferences.interventionLevel !== 'active' || item.impact !== 'high') {
+          continue;
+        }
+      }
+
+      if (learningState.acceptedHashes[hash]) continue;
+      if (learningState.dismissedHashes[hash]) continue;
+      if (seenHashes.has(hash)) continue;
+
+      seenHashes.add(hash);
+
+      filtered.push({
+        id: item.id || `sugg-${now}-${Math.random().toString(36).substring(2, 7)}`,
+        chapter_id: activeChapterId,
+        type: item.type || 'style',
+        impact: item.impact || 'medium',
+        original_text: item.original_text,
+        suggested_text: item.suggested_text,
+        rationale: item.rationale || 'Improve phrasing and rhythm',
+        status: 'pending',
+        context_paragraph: item.context_paragraph,
+        created_at: now,
+        text_hash: hash,
+      });
+    }
+
+    // Keep resolved suggestions (accepted/dismissed) but replace all pending with new focused set
+    const resolved = suggestions.filter(
+      (s) => s.status === 'accepted' || s.status === 'dismissed'
+    );
+
+    set({
+      suggestions: [...resolved.slice(-MAX_TOTAL_HISTORY), ...filtered.slice(0, MAX_PENDING_SUGGESTIONS)],
+      analysisContext: context,
+    });
+  },
+
+  clearFocusedSuggestions: () => {
+    const { suggestions } = get();
+    // Keep only resolved history, clear pending
+    const resolved = suggestions.filter(
+      (s) => s.status === 'accepted' || s.status === 'dismissed'
+    );
+    set({ suggestions: resolved, analysisContext: null });
+  },
+
+  setAnalysisContext: (context) => set({ analysisContext: context }),
 
   applySuggestion: (suggestionId, customText) => {
     const { suggestions, learningState } = get();

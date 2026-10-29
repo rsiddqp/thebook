@@ -10,10 +10,16 @@ export const AuthScreen: React.FC = () => {
   const [message, setMessage] = useState('');
 
   const getRedirectUrl = () => {
-    return (
-      import.meta.env.VITE_AUTH_REDIRECT_URL ||
-      `${window.location.origin}${window.location.pathname}`
-    );
+    // Explicit env override takes priority
+    if (import.meta.env.VITE_AUTH_REDIRECT_URL) {
+      return import.meta.env.VITE_AUTH_REDIRECT_URL;
+    }
+    // Build the URL from current location, ensuring we use the base path
+    // and strip any hash fragments or query params from the redirect target
+    const { origin, pathname } = window.location;
+    // Normalize: ensure trailing slash for SPA root
+    const basePath = pathname.endsWith('/') ? pathname : pathname + '/';
+    return `${origin}${basePath}`;
   };
 
   const handleAuth = async (e: React.FormEvent) => {

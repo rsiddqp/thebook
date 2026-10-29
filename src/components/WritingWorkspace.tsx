@@ -16,7 +16,8 @@ export const WritingWorkspace: React.FC = () => {
     editorialPreferences,
     learningState,
     updateChapterContent,
-    setSuggestions,
+    setFocusedSuggestions,
+    clearFocusedSuggestions,
     applySuggestion,
     restoreSuggestion,
     recheckSuggestionsValidity,
@@ -25,22 +26,43 @@ export const WritingWorkspace: React.FC = () => {
   } = useBookStore();
 
   const debounceTimerRef = useRef<number | null>(null);
+  const selectionTimerRef = useRef<number | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
   const pendingContentRef = useRef<{ id: string; html: string } | null>(null);
   const lastAnalyzedTextRef = useRef<string>('');
+  const lastAnalyzedModeRef = useRef<'realtime' | 'selection' | ''>('');
   const analysisInProgressRef = useRef<boolean>(false);
   const previousSelectionPosRef = useRef<number>(0);
   const loadedChapterIdRef = useRef<string | null>(null);
+  const currentSelectionTextRef = useRef<string>('');
 
   const activeChapterId = activeChapter?.id;
 
+  /**
+   * Analyzes writing:
+   * - If selectedText is provided (>= 10 chars), analyzes only that selection in "selection/editorial" mode.
+   * - Otherwise, analyzes the last paragraph in "realtime co-writer" mode.
+   */
   const analyzeWriting = useCallback(
-    async (fullText: string) => {
+    async (fullText: string, selectedText?: string) => {
       if (!activeChapterId || !activeBook || analysisInProgressRef.current) return;
-      if (fullText.trim().length < 30) return;
 
-      // Avoid re-analyzing identical text
-      if (fullText.trim() === lastAnalyzedTextRef.current.trim()) {
+      const isSelectionMode = Boolean(selectedText && selectedText.trim().length >= 10);
+      const textToAnalyze = isSelectionMode ? selectedText!.trim() : fullText.trim();
+
+      if (textToAnalyze.length < 15) {
+        if (!isSelectionMode) {
+          clearFocusedSuggestions();
+        }
+        return;
+      }
+
+      // Avoid re-analyzing identical focus area in the same mode
+      const modeKey = isSelectionMode ? 'selection' : 'realtime';
+      if (
+        textToAnalyze === lastAnalyzedTextRef.current.trim() &&
+        lastAnalyzedModeRef.current === modeKey
+      ) {
         return;
       }
 
@@ -50,6 +72,7 @@ export const WritingWorkspace: React.FC = () => {
       try {
         const result = await executeEditorialAnalysis({
           fullText,
+          selectedText: isSelectionMode ? selectedText : undefined,
           activeChapterId,
           bookTitle: activeBook.title,
           bookGenre: activeBook.genre,
@@ -59,10 +82,27 @@ export const WritingWorkspace: React.FC = () => {
           learningState,
         });
 
-        lastAnalyzedTextRef.current = fullText.trim();
+        lastAnalyzedTextRef.current = textToAnalyze;
+        lastAnalyzedModeRef.current = modeKey;
+
+        const previewSnippet =
+          result.focusText.length > 60
+            ? `${result.focusText.slice(0, 60)}...`
+            : result.focusText;
+
+        const context = {
+          mode: modeKey as 'realtime' | 'selection',
+          focusText: result.focusText,
+          label: isSelectionMode
+            ? `Selected Text: "${previewSnippet}"`
+            : `Current Paragraph: "${previewSnippet}"`,
+        };
 
         if (result?.suggestions && result.suggestions.length > 0) {
-          setSuggestions(result.suggestions);
+          setFocusedSuggestions(result.suggestions, context);
+        } else {
+          // If no suggestions generated for this focus, clear pending but record context
+          setFocusedSuggestions([], context);
         }
       } catch (error) {
         console.error('Error in editorial analysis:', error);
@@ -76,7 +116,8 @@ export const WritingWorkspace: React.FC = () => {
       activeBook,
       editorialPreferences,
       learningState,
-      setSuggestions,
+      setFocusedSuggestions,
+      clearFocusedSuggestions,
       setIsAnalyzing,
     ]
   );
@@ -97,17 +138,19 @@ export const WritingWorkspace: React.FC = () => {
         }
       }, 1500);
 
-      // Debounce suggestions analysis
+      // If user has an active text selection, do not trigger realtime typing debounce
+      if (currentSelectionTextRef.current.length >= 10) return;
+
+      // Debounce suggestions analysis for active/last paragraph typing
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
 
-      // Smart debounce: shorter pause (1.2s) if punctuation / sentence completion or newline,
-      // otherwise 2.5s of inactive typing to minimize interruptions
+      // Shorter pause (1.0s) if sentence ended or newline; 2.0s during continuous typing
       const trimmed = plainText.trim();
       const lastChar = trimmed.slice(-1);
       const isSentenceEnd = ['.', '?', '!', '\n'].includes(lastChar);
-      const delay = isSentenceEnd ? 1200 : 2500;
+      const delay = isSentenceEnd ? 1000 : 2000;
 
       debounceTimerRef.current = window.setTimeout(() => {
         recheckSuggestionsValidity(plainText);
@@ -115,6 +158,31 @@ export const WritingWorkspace: React.FC = () => {
       }, delay);
     },
     [activeChapterId, updateChapterContent, recheckSuggestionsValidity, analyzeWriting]
+  );
+
+  const handleSelectionChange = useCallback(
+    (selectedText: string, fullText: string) => {
+      currentSelectionTextRef.current = selectedText;
+
+      if (selectionTimerRef.current) {
+        clearTimeout(selectionTimerRef.current);
+      }
+
+      if (selectedText.length >= 10) {
+        // User highlighted a sentence or paragraph -> editorial review mode
+        selectionTimerRef.current = window.setTimeout(() => {
+          analyzeWriting(fullText, selectedText);
+        }, 600);
+      } else {
+        // Selection cleared -> return focus to real-time writing on last paragraph
+        if (lastAnalyzedModeRef.current === 'selection') {
+          selectionTimerRef.current = window.setTimeout(() => {
+            analyzeWriting(fullText);
+          }, 400);
+        }
+      }
+    },
+    [analyzeWriting]
   );
 
   const editor = useEditor({
@@ -138,17 +206,25 @@ export const WritingWorkspace: React.FC = () => {
       handleContentChange(html, plainText);
     },
     onSelectionUpdate: ({ editor: ed }: any) => {
-      previousSelectionPosRef.current = ed.state.selection.from;
+      const { from, to } = ed.state.selection;
+      previousSelectionPosRef.current = from;
+
+      if (from !== to) {
+        const selectedText = ed.state.doc.textBetween(from, to, ' ');
+        const fullText = ed.getText({ blockSeparator: '\n\n' });
+        handleSelectionChange(selectedText.trim(), fullText);
+      } else {
+        const fullText = ed.getText({ blockSeparator: '\n\n' });
+        handleSelectionChange('', fullText);
+      }
     },
   });
 
   // Sync content ONLY when active chapter ID changes (initial load or user switches chapter)
-  // NEVER reset editor content while the user is actively typing in the current chapter
   useEffect(() => {
     if (!editor || !activeChapterId) return;
 
     if (loadedChapterIdRef.current !== activeChapterId) {
-      // Flush previous chapter save if any
       if (pendingContentRef.current && pendingContentRef.current.id !== activeChapterId) {
         updateChapterContent(pendingContentRef.current.id, pendingContentRef.current.html);
         pendingContentRef.current = null;
@@ -158,18 +234,16 @@ export const WritingWorkspace: React.FC = () => {
       const chapterContent = activeChapter?.content || '';
       editor.commands.setContent(chapterContent);
       lastAnalyzedTextRef.current = '';
+      lastAnalyzedModeRef.current = '';
     }
   }, [activeChapterId, activeChapter?.content, editor, updateChapterContent]);
 
   // Flush pending auto-save and clear timers on unmount
   useEffect(() => {
     return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-      }
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-      }
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (selectionTimerRef.current) clearTimeout(selectionTimerRef.current);
       if (pendingContentRef.current) {
         updateChapterContent(pendingContentRef.current.id, pendingContentRef.current.html);
       }

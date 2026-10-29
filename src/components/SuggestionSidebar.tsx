@@ -38,8 +38,10 @@ export const SuggestionSidebar: React.FC<SuggestionSidebarProps> = ({
     dismissSuggestion,
     restoreSuggestion,
     clearResolvedSuggestions,
+    clearFocusedSuggestions,
     isAnalyzing,
     editorialPreferences,
+    analysisContext,
   } = useBookStore();
 
   const [activeTab, setActiveTab] = useState<SuggestionStatus>('pending');
@@ -56,18 +58,20 @@ export const SuggestionSidebar: React.FC<SuggestionSidebarProps> = ({
   const outdatedCount = suggestions.filter((s) => s.status === 'outdated').length;
 
   // Filtered suggestions for the current tab
-  const filteredSuggestions = suggestions.filter((s) => {
-    // Tab filter
-    if (s.status !== activeTab) return false;
-
-    // Category filter
-    if (selectedCategory !== 'all' && s.type !== selectedCategory) return false;
-
-    // Impact filter
-    if (selectedImpact !== 'all' && s.impact !== selectedImpact) return false;
-
-    return true;
-  });
+  const filteredSuggestions = suggestions
+    .filter((s) => {
+      if (s.status !== activeTab) return false;
+      if (selectedCategory !== 'all' && s.type !== selectedCategory) return false;
+      if (selectedImpact !== 'all' && s.impact !== selectedImpact) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      // High impact first, then newest
+      const impactWeight: Record<SuggestionImpact, number> = { high: 3, medium: 2, low: 1 };
+      const weightDiff = (impactWeight[b.impact || 'medium'] || 0) - (impactWeight[a.impact || 'medium'] || 0);
+      if (weightDiff !== 0) return weightDiff;
+      return (b.created_at || 0) - (a.created_at || 0);
+    });
 
   const handleStartEdit = (sugg: Suggestion) => {
     setEditingId(sugg.id);
@@ -78,6 +82,8 @@ export const SuggestionSidebar: React.FC<SuggestionSidebarProps> = ({
     onApplySuggestion(suggId, editedText);
     setEditingId(null);
   };
+
+  const isSelectionMode = analysisContext?.mode === 'selection';
 
   return (
     <div className="w-full md:w-[32%] bg-slate-50 border-l border-slate-200 flex flex-col h-full shadow-inner select-none font-sans">
@@ -121,6 +127,43 @@ export const SuggestionSidebar: React.FC<SuggestionSidebarProps> = ({
         </div>
       </div>
 
+      {/* Focus Mode Context Banner */}
+      <div
+        className={`px-3 py-2 border-b text-xs flex items-center justify-between transition-colors ${
+          isSelectionMode
+            ? 'bg-amber-50/80 border-amber-200 text-amber-900'
+            : 'bg-blue-50/60 border-blue-100 text-blue-900'
+        }`}
+      >
+        <div className="flex items-center gap-1.5 overflow-hidden">
+          <span
+            className={`w-2 h-2 rounded-full shrink-0 ${
+              isSelectionMode ? 'bg-amber-500' : 'bg-blue-500'
+            } ${isAnalyzing ? 'animate-pulse' : ''}`}
+          />
+          <span className="font-semibold text-[11px] shrink-0">
+            {isSelectionMode ? 'Editorial Review:' : 'Co-Writer Focus:'}
+          </span>
+          <span className="text-[11px] truncate text-slate-600 font-serif">
+            {analysisContext?.focusText
+              ? `"${analysisContext.focusText.slice(0, 45)}${
+                  analysisContext.focusText.length > 45 ? '...' : ''
+                }"`
+              : 'Last written paragraph'}
+          </span>
+        </div>
+
+        {isSelectionMode && (
+          <button
+            onClick={clearFocusedSuggestions}
+            className="text-[10px] text-amber-700 hover:text-amber-900 font-medium px-1.5 py-0.5 rounded hover:bg-amber-100 transition-colors shrink-0 ml-2"
+            title="Return to real-time writing focus"
+          >
+            Clear Selection
+          </button>
+        )}
+      </div>
+
       {/* Tabs */}
       <div className="bg-white border-b border-slate-200 px-3 flex gap-1 text-xs shrink-0">
         <button
@@ -131,7 +174,7 @@ export const SuggestionSidebar: React.FC<SuggestionSidebarProps> = ({
               : 'border-transparent text-slate-500 hover:text-slate-700'
           }`}
         >
-          <span>Pending</span>
+          <span>Suggestions</span>
           <span
             className={`px-1.5 py-0.2 rounded-full text-[10px] ${
               pendingCount > 0 ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'
@@ -241,7 +284,9 @@ export const SuggestionSidebar: React.FC<SuggestionSidebarProps> = ({
             </div>
             <p className="text-slate-700 text-xs font-semibold">
               {activeTab === 'pending'
-                ? 'Your writing is flowing cleanly'
+                ? isSelectionMode
+                  ? 'No suggestions for selected text'
+                  : 'Suggestions will appear as you write'
                 : activeTab === 'accepted'
                 ? 'No resolved suggestions yet'
                 : activeTab === 'dismissed'
@@ -250,7 +295,9 @@ export const SuggestionSidebar: React.FC<SuggestionSidebarProps> = ({
             </p>
             <p className="text-slate-400 text-[11px] mt-1 max-w-xs mx-auto">
               {activeTab === 'pending'
-                ? 'High-impact editorial recommendations appear as you pause or conclude sentences.'
+                ? isSelectionMode
+                  ? 'The selected text reads cleanly and fits your editorial style.'
+                  : 'Focus is kept on the last written paragraph. Select any previous text to review it specifically.'
                 : 'Suggestions you act upon will be preserved here.'}
             </p>
           </div>
