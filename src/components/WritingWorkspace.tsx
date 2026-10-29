@@ -35,6 +35,7 @@ export const WritingWorkspace: React.FC = () => {
   const previousSelectionPosRef = useRef<number>(0);
   const loadedChapterIdRef = useRef<string | null>(null);
   const currentSelectionTextRef = useRef<string>('');
+  const applyingSuggestionRef = useRef<boolean>(false);
 
   const activeChapterId = activeChapter?.id;
 
@@ -162,6 +163,11 @@ export const WritingWorkspace: React.FC = () => {
 
   const handleSelectionChange = useCallback(
     (selectedText: string, fullText: string) => {
+      // Ignore selection changes while applying suggestions
+      if (applyingSuggestionRef.current) {
+        return;
+      }
+
       currentSelectionTextRef.current = selectedText;
 
       if (selectionTimerRef.current) {
@@ -264,7 +270,11 @@ export const WritingWorkspace: React.FC = () => {
         customReplacement !== undefined ? customReplacement : suggestion.suggested_text;
       const originalText = suggestion.original_text;
 
-      // 1. Capture current cursor / selection
+      // Set flag to prevent selection change handlers from firing
+      applyingSuggestionRef.current = true;
+
+      // 1. Capture current cursor / selection and store if editor was focused
+      const editorWasFocused = editor.isFocused;
       const currentSelection = editor.state.selection;
       const currentCursor = currentSelection.from;
 
@@ -276,6 +286,7 @@ export const WritingWorkspace: React.FC = () => {
         console.warn(`Cannot apply suggestion ${suggestionId}: original text not found in document`);
         const fullDocText = editor.getText({ blockSeparator: '\n\n' });
         recheckSuggestionsValidity(fullDocText);
+        applyingSuggestionRef.current = false;
         return;
       }
 
@@ -288,10 +299,9 @@ export const WritingWorkspace: React.FC = () => {
         newCursor = range.from + textToInsert.length;
       }
 
-      // 4. Replace content precisely
+      // 4. Replace content precisely WITHOUT focusing (to avoid triggering selection handlers)
       const replaceSuccess = editor
         .chain()
-        .focus()
         .setTextSelection({ from: range.from, to: range.to })
         .insertContent(textToInsert)
         .run();
@@ -299,14 +309,25 @@ export const WritingWorkspace: React.FC = () => {
       // 5. Verify the replacement succeeded
       if (!replaceSuccess) {
         console.error(`Failed to apply suggestion ${suggestionId}: editor command failed`);
+        applyingSuggestionRef.current = false;
         return;
       }
 
-      // 6. Restore cursor position seamlessly
+      // 6. Restore cursor position as collapsed selection (no text selected)
       try {
         const docSize = editor.state.doc.content.size;
         const clampedPos = Math.max(0, Math.min(newCursor, docSize));
-        editor.commands.setTextSelection(clampedPos);
+        
+        // Set cursor without selecting any text (collapsed selection)
+        editor.commands.setTextSelection({ from: clampedPos, to: clampedPos });
+        
+        // Only restore focus if editor was previously focused (don't steal focus from sidebar)
+        if (editorWasFocused) {
+          editor.commands.focus();
+        } else {
+          // If editor wasn't focused, blur it to ensure no focus
+          editor.commands.blur();
+        }
       } catch (err) {
         // Fallback - don't fail the entire operation if cursor positioning fails
         console.warn('Failed to restore cursor position:', err);
@@ -318,6 +339,11 @@ export const WritingWorkspace: React.FC = () => {
       // 8. Recheck validity of remaining suggestions
       const updatedText = editor.getText({ blockSeparator: '\n\n' });
       recheckSuggestionsValidity(updatedText);
+
+      // 9. Clear the flag after a short delay to allow editor to stabilize
+      setTimeout(() => {
+        applyingSuggestionRef.current = false;
+      }, 100);
     },
     [editor, suggestions, applySuggestion, recheckSuggestionsValidity]
   );
