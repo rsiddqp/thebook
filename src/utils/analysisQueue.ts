@@ -255,9 +255,10 @@ export class AnalysisQueue {
 }
 
 // Singleton instance for the editor
+// Optimized for real-time AI suggestions with smart rate limiting
 export const editorAnalysisQueue = new AnalysisQueue({
-  maxWaitTime: 1500,
-  minInterval: 800,
+  maxWaitTime: 800, // Process quickly for responsive suggestions
+  minInterval: 400, // Short interval for real-time feel
   maxConcurrent: 1, // Only one analysis at a time for coherent suggestions
   enableBatching: true,
 });

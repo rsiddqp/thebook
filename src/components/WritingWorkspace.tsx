@@ -43,7 +43,7 @@ export const WritingWorkspace: React.FC = () => {
    * - If selectedText is provided (>= 10 chars), analyzes only that selection in "selection/editorial" mode.
    * - Otherwise, analyzes the last paragraph in "realtime co-writer" mode.
    */
-  const analyzeWriting = useCallback(
+   const analyzeWriting = useCallback(
     async (fullText: string, selectedText?: string, priority: 'high' | 'normal' | 'low' = 'normal') => {
       if (!activeChapterId || !activeBook) return;
 
@@ -57,16 +57,20 @@ export const WritingWorkspace: React.FC = () => {
         return;
       }
 
-      // Avoid re-analyzing identical focus area in the same mode
       const modeKey = isSelectionMode ? 'selection' : 'realtime';
-      if (
-        textToAnalyze === lastAnalyzedTextRef.current.trim() &&
-        lastAnalyzedModeRef.current === modeKey
-      ) {
-        return;
+      
+      // For selection mode, always trigger new analysis when selection changes
+      // For realtime mode, avoid re-analyzing identical text
+      if (!isSelectionMode) {
+        if (
+          textToAnalyze === lastAnalyzedTextRef.current.trim() &&
+          lastAnalyzedModeRef.current === modeKey
+        ) {
+          return;
+        }
       }
 
-      // Cancel previous analysis of the same mode (it's now outdated)
+      // Cancel previous analysis (it's now outdated)
       if (currentAnalysisIdRef.current) {
         editorAnalysisQueue.cancel(currentAnalysisIdRef.current);
       }
@@ -172,16 +176,17 @@ export const WritingWorkspace: React.FC = () => {
       // Recheck suggestions validity immediately (no debounce needed)
       recheckSuggestionsValidity(plainText);
 
-      // Determine priority based on typing pattern
+      // Smart triggering: only analyze on sentence completion or paragraph breaks
       const trimmed = plainText.trim();
       const lastChar = trimmed.slice(-1);
-      const isSentenceEnd = ['.', '?', '!', '\n'].includes(lastChar);
+      const isSentenceEnd = ['.', '?', '!'].includes(lastChar);
+      const isParagraphBreak = trimmed.endsWith('\n\n');
       
-      // High priority for sentence ends, normal for continuous typing
-      const priority = isSentenceEnd ? 'high' : 'normal';
-
-      // Let the analysis queue handle intelligent debouncing and scheduling
-      analyzeWriting(plainText, undefined, priority);
+      // Only trigger real-time analysis when user completes a thought
+      if (isSentenceEnd || isParagraphBreak) {
+        // High priority for completed sentences - immediate AI feedback
+        analyzeWriting(plainText, undefined, 'high');
+      }
     },
     [activeChapterId, updateChapterContent, recheckSuggestionsValidity, analyzeWriting]
   );

@@ -442,7 +442,7 @@ export async function executeEditorialAnalysis(
     }
   }
 
-  // Edge function branch
+  // Edge function branch with rate limit handling
   if (preferences.apiProvider !== 'mock') {
     try {
       const { data, error } = await supabase.functions.invoke('analyze-writing', {
@@ -463,7 +463,16 @@ export async function executeEditorialAnalysis(
         },
       });
 
-      if (!error && data?.suggestions && Array.isArray(data.suggestions) && data.suggestions.length > 0) {
+      // Check for rate limit errors
+      if (error) {
+        const errorMessage = error.message || '';
+        if (errorMessage.includes('rate limit') || errorMessage.includes('429')) {
+          console.info('Rate limit reached, using local editorial rules. Please wait before making more requests.');
+          // Fall through to local rules
+        } else {
+          console.info('Edge function unavailable, using local editorial intelligence:', error);
+        }
+      } else if (data?.suggestions && Array.isArray(data.suggestions) && data.suggestions.length > 0) {
         // Tag with context paragraph
         const tagged: Suggestion[] = data.suggestions.map((s: any, idx: number) => ({
           ...s,
@@ -478,11 +487,11 @@ export async function executeEditorialAnalysis(
       }
     } catch (edgeErr) {
       // Non-blocking fallback to local rules
-      console.info('Edge function unavailable, using local editorial intelligence:', edgeErr);
+      console.info('Edge function error, using local editorial intelligence:', edgeErr);
     }
   }
 
-  // Local rule-based engine fallback
+  // Local rule-based engine fallback (always available)
   const localSuggestions = runLocalEditorialRules(activeText, preferences, learningState);
   return { suggestions: localSuggestions, source: 'local', focusText: activeText };
 }
