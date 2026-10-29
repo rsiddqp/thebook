@@ -268,11 +268,14 @@ export const WritingWorkspace: React.FC = () => {
       const currentSelection = editor.state.selection;
       const currentCursor = currentSelection.from;
 
-      // 2. Locate exact range in document
+      // 2. Locate text range in document (with fuzzy matching support)
       const range = findTextRangeInDoc(editor.state.doc, originalText, currentCursor);
+      
       if (!range) {
-        // Text not found in document - cannot apply suggestion
+        // Text not found - mark as outdated and trigger recheck
         console.warn(`Cannot apply suggestion ${suggestionId}: original text not found in document`);
+        const fullDocText = editor.getText({ blockSeparator: '\n\n' });
+        recheckSuggestionsValidity(fullDocText);
         return;
       }
 
@@ -309,17 +312,14 @@ export const WritingWorkspace: React.FC = () => {
         console.warn('Failed to restore cursor position:', err);
       }
 
-      // 7. Verify the text is actually in the document now
-      const updatedText = editor.getText({ blockSeparator: '\n\n' });
-      if (!updatedText.includes(textToInsert)) {
-        console.error(`Suggestion ${suggestionId} failed verification: replacement text not found in document`);
-        return;
-      }
-
-      // 8. Update store only after successful replacement
+      // 7. Update store after successful replacement
       applySuggestion(suggestionId, textToInsert);
+
+      // 8. Recheck validity of remaining suggestions
+      const updatedText = editor.getText({ blockSeparator: '\n\n' });
+      recheckSuggestionsValidity(updatedText);
     },
-    [editor, suggestions, applySuggestion]
+    [editor, suggestions, applySuggestion, recheckSuggestionsValidity]
   );
 
   /**
