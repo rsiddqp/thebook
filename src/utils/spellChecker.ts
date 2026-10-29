@@ -1,3 +1,4 @@
+// @ts-ignore - typo-js doesn't have type definitions
 import Typo from 'typo-js';
 
 /**

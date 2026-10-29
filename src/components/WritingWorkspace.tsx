@@ -218,8 +218,6 @@ export const WritingWorkspace: React.FC = () => {
       SpellCheckExtension.configure({
         enabled: true,
         autoCorrect: true,
-        spellCheckClass: 'spell-error',
-        debounceDelay: 300,
       }),
     ],
     content: activeChapter?.content || '',

@@ -38,7 +38,7 @@ export class AnalysisQueue {
   private queue: AnalysisRequest[] = [];
   private activeRequests: Map<string, AbortController> = new Map();
   private lastAnalysisTime: number = 0;
-  private processingTimer: NodeJS.Timeout | null = null;
+  private processingTimer: ReturnType<typeof setTimeout> | null = null;
   private options: AnalysisQueueOptions;
   
   constructor(options?: Partial<AnalysisQueueOptions>) {
