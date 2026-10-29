@@ -7,7 +7,6 @@ import { ChapterBar } from './ChapterBar';
 import { SuggestionSidebar } from './SuggestionSidebar';
 import { executeEditorialAnalysis } from '../utils/editorialEngine';
 import { findTextRangeInDoc } from '../utils/editorUtils';
-import { SpellCheckExtension } from '../extensions/SpellCheckExtension';
 import { editorAnalysisQueue } from '../utils/analysisQueue';
 
 export const WritingWorkspace: React.FC = () => {
@@ -214,10 +213,6 @@ export const WritingWorkspace: React.FC = () => {
       StarterKit,
       Placeholder.configure({
         placeholder: 'Begin writing your story here...',
-      }),
-      SpellCheckExtension.configure({
-        enabled: true,
-        autoCorrect: true,
       }),
     ],
     content: activeChapter?.content || '',

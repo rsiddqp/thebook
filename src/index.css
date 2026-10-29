@@ -2,19 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Spell check styling */
-.spell-error {
-  text-decoration: underline wavy red;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-
-.spell-error:hover {
-  background-color: rgba(239, 68, 68, 0.1);
-  border-radius: 2px;
-}
-
 /* Smooth transitions for editor */
 .prose {
   transition: all 0.2s ease;
