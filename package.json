@@ -11,11 +11,13 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
+    "@tiptap/extension-placeholder": "^2.1.13",
     "@tiptap/react": "^2.1.13",
     "@tiptap/starter-kit": "^2.1.13",
-    "@tiptap/extension-placeholder": "^2.1.13",
+    "nspell": "^2.1.5",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "typo-js": "^1.4.0",
     "zustand": "^4.4.7"
   },
   "devDependencies": {

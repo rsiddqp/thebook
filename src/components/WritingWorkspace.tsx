@@ -7,6 +7,8 @@ import { ChapterBar } from './ChapterBar';
 import { SuggestionSidebar } from './SuggestionSidebar';
 import { executeEditorialAnalysis } from '../utils/editorialEngine';
 import { findTextRangeInDoc } from '../utils/editorUtils';
+import { SpellCheckExtension } from '../extensions/SpellCheckExtension';
+import { editorAnalysisQueue } from '../utils/analysisQueue';
 
 export const WritingWorkspace: React.FC = () => {
   const {
@@ -25,28 +27,26 @@ export const WritingWorkspace: React.FC = () => {
     isAnalyzing,
   } = useBookStore();
 
-  const debounceTimerRef = useRef<number | null>(null);
-  const selectionTimerRef = useRef<number | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
   const pendingContentRef = useRef<{ id: string; html: string } | null>(null);
   const lastAnalyzedTextRef = useRef<string>('');
   const lastAnalyzedModeRef = useRef<'realtime' | 'selection' | ''>('');
-  const analysisInProgressRef = useRef<boolean>(false);
   const previousSelectionPosRef = useRef<number>(0);
   const loadedChapterIdRef = useRef<string | null>(null);
   const currentSelectionTextRef = useRef<string>('');
   const applyingSuggestionRef = useRef<boolean>(false);
+  const currentAnalysisIdRef = useRef<string | null>(null);
 
   const activeChapterId = activeChapter?.id;
 
   /**
-   * Analyzes writing:
+   * Analyzes writing with intelligent queueing and cancellation:
    * - If selectedText is provided (>= 10 chars), analyzes only that selection in "selection/editorial" mode.
    * - Otherwise, analyzes the last paragraph in "realtime co-writer" mode.
    */
   const analyzeWriting = useCallback(
-    async (fullText: string, selectedText?: string) => {
-      if (!activeChapterId || !activeBook || analysisInProgressRef.current) return;
+    async (fullText: string, selectedText?: string, priority: 'high' | 'normal' | 'low' = 'normal') => {
+      if (!activeChapterId || !activeBook) return;
 
       const isSelectionMode = Boolean(selectedText && selectedText.trim().length >= 10);
       const textToAnalyze = isSelectionMode ? selectedText!.trim() : fullText.trim();
@@ -67,21 +67,46 @@ export const WritingWorkspace: React.FC = () => {
         return;
       }
 
-      analysisInProgressRef.current = true;
+      // Cancel previous analysis of the same mode (it's now outdated)
+      if (currentAnalysisIdRef.current) {
+        editorAnalysisQueue.cancel(currentAnalysisIdRef.current);
+      }
+
+      // Enqueue the analysis request
+      const requestId = editorAnalysisQueue.enqueue({
+        text: fullText,
+        selectedText: isSelectionMode ? selectedText : undefined,
+        mode: modeKey,
+        priority,
+      });
+
+      currentAnalysisIdRef.current = requestId;
       setIsAnalyzing(true);
 
       try {
-        const result = await executeEditorialAnalysis({
-          fullText,
-          selectedText: isSelectionMode ? selectedText : undefined,
-          activeChapterId,
-          bookTitle: activeBook.title,
-          bookGenre: activeBook.genre,
-          styleFingerprint: activeBook.style_fingerprint || {},
-          globalContextSummary: activeBook.global_context_summary || '',
-          preferences: editorialPreferences,
-          learningState,
+        const result = await editorAnalysisQueue.execute(requestId, async (signal) => {
+          // Check if cancelled before starting
+          if (signal.aborted) {
+            throw new Error('Analysis cancelled');
+          }
+
+          return await executeEditorialAnalysis({
+            fullText,
+            selectedText: isSelectionMode ? selectedText : undefined,
+            activeChapterId,
+            bookTitle: activeBook.title,
+            bookGenre: activeBook.genre,
+            styleFingerprint: activeBook.style_fingerprint || {},
+            globalContextSummary: activeBook.global_context_summary || '',
+            preferences: editorialPreferences,
+            learningState,
+          });
         });
+
+        // Check if this analysis was cancelled or replaced
+        if (!result || currentAnalysisIdRef.current !== requestId) {
+          return;
+        }
 
         lastAnalyzedTextRef.current = textToAnalyze;
         lastAnalyzedModeRef.current = modeKey;
@@ -102,14 +127,17 @@ export const WritingWorkspace: React.FC = () => {
         if (result?.suggestions && result.suggestions.length > 0) {
           setFocusedSuggestions(result.suggestions, context);
         } else {
-          // If no suggestions generated for this focus, clear pending but record context
           setFocusedSuggestions([], context);
         }
       } catch (error) {
-        console.error('Error in editorial analysis:', error);
+        if (error instanceof Error && error.message !== 'Analysis cancelled') {
+          console.error('Error in editorial analysis:', error);
+        }
       } finally {
-        analysisInProgressRef.current = false;
-        setIsAnalyzing(false);
+        if (currentAnalysisIdRef.current === requestId) {
+          currentAnalysisIdRef.current = null;
+          setIsAnalyzing(editorAnalysisQueue.isAnalyzing());
+        }
       }
     },
     [
@@ -139,24 +167,22 @@ export const WritingWorkspace: React.FC = () => {
         }
       }, 1500);
 
-      // If user has an active text selection, do not trigger realtime typing debounce
+      // If user has an active text selection, do not trigger realtime typing analysis
       if (currentSelectionTextRef.current.length >= 10) return;
 
-      // Debounce suggestions analysis for active/last paragraph typing
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-      }
+      // Recheck suggestions validity immediately (no debounce needed)
+      recheckSuggestionsValidity(plainText);
 
-      // Shorter pause (1.0s) if sentence ended or newline; 2.0s during continuous typing
+      // Determine priority based on typing pattern
       const trimmed = plainText.trim();
       const lastChar = trimmed.slice(-1);
       const isSentenceEnd = ['.', '?', '!', '\n'].includes(lastChar);
-      const delay = isSentenceEnd ? 1000 : 2000;
+      
+      // High priority for sentence ends, normal for continuous typing
+      const priority = isSentenceEnd ? 'high' : 'normal';
 
-      debounceTimerRef.current = window.setTimeout(() => {
-        recheckSuggestionsValidity(plainText);
-        analyzeWriting(plainText);
-      }, delay);
+      // Let the analysis queue handle intelligent debouncing and scheduling
+      analyzeWriting(plainText, undefined, priority);
     },
     [activeChapterId, updateChapterContent, recheckSuggestionsValidity, analyzeWriting]
   );
@@ -170,21 +196,13 @@ export const WritingWorkspace: React.FC = () => {
 
       currentSelectionTextRef.current = selectedText;
 
-      if (selectionTimerRef.current) {
-        clearTimeout(selectionTimerRef.current);
-      }
-
       if (selectedText.length >= 10) {
-        // User highlighted a sentence or paragraph -> editorial review mode
-        selectionTimerRef.current = window.setTimeout(() => {
-          analyzeWriting(fullText, selectedText);
-        }, 600);
+        // User highlighted a sentence or paragraph -> editorial review mode (high priority)
+        analyzeWriting(fullText, selectedText, 'high');
       } else {
         // Selection cleared -> return focus to real-time writing on last paragraph
         if (lastAnalyzedModeRef.current === 'selection') {
-          selectionTimerRef.current = window.setTimeout(() => {
-            analyzeWriting(fullText);
-          }, 400);
+          analyzeWriting(fullText, undefined, 'normal');
         }
       }
     },
@@ -196,6 +214,12 @@ export const WritingWorkspace: React.FC = () => {
       StarterKit,
       Placeholder.configure({
         placeholder: 'Begin writing your story here...',
+      }),
+      SpellCheckExtension.configure({
+        enabled: true,
+        autoCorrect: true,
+        spellCheckClass: 'spell-error',
+        debounceDelay: 300,
       }),
     ],
     content: activeChapter?.content || '',
@@ -244,15 +268,15 @@ export const WritingWorkspace: React.FC = () => {
     }
   }, [activeChapterId, activeChapter?.content, editor, updateChapterContent]);
 
-  // Flush pending auto-save and clear timers on unmount
+  // Flush pending auto-save, clear analysis queue, and clear timers on unmount
   useEffect(() => {
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      if (selectionTimerRef.current) clearTimeout(selectionTimerRef.current);
       if (pendingContentRef.current) {
         updateChapterContent(pendingContentRef.current.id, pendingContentRef.current.html);
       }
+      // Cancel any pending analyses
+      editorAnalysisQueue.cancelAll();
     };
   }, [updateChapterContent]);
 
