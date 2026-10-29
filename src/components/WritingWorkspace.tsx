@@ -271,8 +271,8 @@ export const WritingWorkspace: React.FC = () => {
       // 2. Locate exact range in document
       const range = findTextRangeInDoc(editor.state.doc, originalText, currentCursor);
       if (!range) {
-        // Text may have already been edited or replaced
-        applySuggestion(suggestionId, textToInsert);
+        // Text not found in document - cannot apply suggestion
+        console.warn(`Cannot apply suggestion ${suggestionId}: original text not found in document`);
         return;
       }
 
@@ -286,23 +286,37 @@ export const WritingWorkspace: React.FC = () => {
       }
 
       // 4. Replace content precisely
-      editor
+      const replaceSuccess = editor
         .chain()
         .focus()
         .setTextSelection({ from: range.from, to: range.to })
         .insertContent(textToInsert)
         .run();
 
-      // 5. Restore cursor position seamlessly
+      // 5. Verify the replacement succeeded
+      if (!replaceSuccess) {
+        console.error(`Failed to apply suggestion ${suggestionId}: editor command failed`);
+        return;
+      }
+
+      // 6. Restore cursor position seamlessly
       try {
         const docSize = editor.state.doc.content.size;
         const clampedPos = Math.max(0, Math.min(newCursor, docSize));
         editor.commands.setTextSelection(clampedPos);
       } catch (err) {
-        // Fallback
+        // Fallback - don't fail the entire operation if cursor positioning fails
+        console.warn('Failed to restore cursor position:', err);
       }
 
-      // 6. Update store
+      // 7. Verify the text is actually in the document now
+      const updatedText = editor.getText({ blockSeparator: '\n\n' });
+      if (!updatedText.includes(textToInsert)) {
+        console.error(`Suggestion ${suggestionId} failed verification: replacement text not found in document`);
+        return;
+      }
+
+      // 8. Update store only after successful replacement
       applySuggestion(suggestionId, textToInsert);
     },
     [editor, suggestions, applySuggestion]
