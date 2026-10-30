@@ -1,7 +1,78 @@
 import "https://deno.land/x/xhr@0.3.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 
 const PERPLEXITY_API_KEY = Deno.env.get('PERPLEXITY_API_KEY');
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+// Rate limiting configuration
+const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
+const MAX_REQUESTS_PER_WINDOW = 10; // 10 requests per minute per user
+const GLOBAL_MAX_REQUESTS = 50; // 50 requests per minute globally
+
+// In-memory rate limit tracking (for serverless, we use Supabase for persistence)
+const rateLimitCache = new Map<string, { count: number; resetAt: number }>();
+
+/**
+ * Check and enforce rate limits for a user
+ */
+async function checkRateLimit(userId: string | null, supabase: any): Promise<{ allowed: boolean; retryAfter?: number }> {
+  const now = Date.now();
+  const clientId = userId || 'anonymous';
+  
+  // Check in-memory cache first (fast path)
+  let userLimit = rateLimitCache.get(clientId);
+  
+  if (!userLimit || now >= userLimit.resetAt) {
+    // Reset window
+    userLimit = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+    rateLimitCache.set(clientId, userLimit);
+  }
+  
+  // Check if user exceeded their limit
+  if (userLimit.count >= MAX_REQUESTS_PER_WINDOW) {
+    const retryAfter = Math.ceil((userLimit.resetAt - now) / 1000);
+    return { allowed: false, retryAfter };
+  }
+  
+  // Check global rate limit using Supabase
+  try {
+    const windowStart = new Date(now - RATE_LIMIT_WINDOW_MS).toISOString();
+    
+    // Count recent requests from rate_limit_log table
+    const { count, error } = await supabase
+      .from('rate_limit_log')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', windowStart);
+    
+    if (!error && count !== null && count >= GLOBAL_MAX_REQUESTS) {
+      return { allowed: false, retryAfter: 60 };
+    }
+  } catch (err) {
+    // If rate limit check fails, allow the request (fail open)
+    console.warn('Rate limit check failed:', err);
+  }
+  
+  // Increment user's request count
+  userLimit.count++;
+  
+  return { allowed: true };
+}
+
+/**
+ * Log rate limit event to Supabase for tracking
+ */
+async function logRateLimitEvent(userId: string | null, supabase: any): Promise<void> {
+  try {
+    await supabase.from('rate_limit_log').insert({
+      user_id: userId,
+      created_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn('Failed to log rate limit event:', err);
+  }
+}
 
 serve(async (req) => {
   // Handle CORS
@@ -16,6 +87,42 @@ serve(async (req) => {
   }
 
   try {
+    // Initialize Supabase client
+    const authHeader = req.headers.get('Authorization');
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    
+    // Extract user ID from auth token
+    let userId: string | null = null;
+    if (authHeader) {
+      try {
+        const token = authHeader.replace('Bearer ', '');
+        const { data: { user } } = await supabase.auth.getUser(token);
+        userId = user?.id || null;
+      } catch (err) {
+        console.warn('Failed to extract user from token:', err);
+      }
+    }
+    
+    // Check rate limit
+    const rateLimitResult = await checkRateLimit(userId, supabase);
+    if (!rateLimitResult.allowed) {
+      return new Response(JSON.stringify({ 
+        error: 'Rate limit exceeded. Please wait before making more requests.',
+        retryAfter: rateLimitResult.retryAfter,
+        suggestions: []
+      }), {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Retry-After': String(rateLimitResult.retryAfter || 60),
+        },
+      });
+    }
+    
+    // Log the request
+    await logRateLimitEvent(userId, supabase);
+    
     const {
       activeText,
       localContext,

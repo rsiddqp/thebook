@@ -466,8 +466,8 @@ export async function executeEditorialAnalysis(
       // Check for rate limit errors
       if (error) {
         const errorMessage = error.message || '';
-        if (errorMessage.includes('rate limit') || errorMessage.includes('429')) {
-          console.info('Rate limit reached, using local editorial rules. Please wait before making more requests.');
+        if (errorMessage.includes('rate limit') || errorMessage.includes('429') || errorMessage.includes('Rate limit exceeded')) {
+          console.warn('⏱️ Rate limit reached. Using local editorial rules. The AI service will be available again shortly.');
           // Fall through to local rules
         } else {
           console.info('Edge function unavailable, using local editorial intelligence:', error);
